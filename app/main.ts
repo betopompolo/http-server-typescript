@@ -4,7 +4,6 @@ import * as net from "net";
 console.log("Logs from your program will appear here!");
 
 const server = net.createServer((socket) => {
-  socket.write(createResponse(200));
   socket.on('data', (chunk) => {
     const str = chunk.toString();
     const [status] = str.split("\n");
