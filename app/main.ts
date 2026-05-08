@@ -133,7 +133,7 @@ function isCompressionSchema(value: unknown): value is CompressionSchema {
 
 const compressionSchemaSeparator = ', ';
 function getSupportedCompressionSchemas(header: Headers): CompressionSchema[] {
-  const clientSchemas = header['Accept-Encoding'].split(compressionSchemaSeparator);
+  const clientSchemas = (header['Accept-Encoding'] ?? "").split(compressionSchemaSeparator);
 
   return clientSchemas.filter(isCompressionSchema);
 }
