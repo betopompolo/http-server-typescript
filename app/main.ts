@@ -98,16 +98,18 @@ const statusMessages: Record<RequestStatus, string> = {
 
 function createResponse(status: RequestStatus, header: string = '', body: string | Uint8Array = ""): string | Uint8Array {
   const statusMessage = statusMessages[status];
+  const statusAndHeader = [
+    `HTTP/1.1 ${status} ${statusMessage}`,
+    `${header}${crlf}`,
+  ].join(crlf);
 
   if (typeof body === 'string') {
     return [
-      `HTTP/1.1 ${status} ${statusMessage}`,
-      header,
+      statusAndHeader,
       body
     ].join(crlf);
   } else {
-    const responseLine = `HTTP/1.1 ${status} ${statusMessage}${crlf}${header}${crlf}`;
-    const headerBuffer = Buffer.from(responseLine);
+    const headerBuffer = Buffer.from(statusAndHeader);
     return Buffer.concat([headerBuffer, body]);
   }
 }
