@@ -43,9 +43,13 @@ const crlf = "\r\n" as const;
 
 function createResponse(status: 404 | 200, header: string = '', body: string = ""): string {
   const statusMessage = status === 404 ? "Not Found" : "OK";
-  return `HTTP/1.1 ${status} ${statusMessage}${crlf}${header}${crlf}${body}`;
+  return [
+    `HTTP/1.1 ${status} ${statusMessage}`,
+    header,
+    body
+  ].join(crlf);
 }
 
 function serializeHeaders(headers: Record<string, string>): string {
-  return Object.entries(headers).map(([key, value]) => `${key}: ${value}`).join(crlf);
+  return Object.entries(headers).map(([key, value]) => `${key}: ${value}${crlf}`).join('');
 }
