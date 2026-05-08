@@ -1,0 +1,24 @@
+* Host localhost:4221 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0*   Trying [::1]:4221...
+* Connected to localhost (::1) port 4221
+> GET /echo/abc HTTP/1.1
+> Host: localhost:4221
+> User-Agent: curl/8.7.1
+> Accept: */*
+> Accept-Encoding: gzip
+> 
+* Request completely sent off
+< HTTP/1.1 200 OK
+< Content-Encoding: gzip
+< Content-Type: text/plain
+< Content-Length: 23
+< 
+{ [57 bytes data]
+* Excess found writing body: excess = 34, size = 23, maxdownload = 23, bytecount = 23
+100    23  100    23    0     0  19182      0 --:--:-- --:--:-- --:--:-- 23000
+* Closing connection
+31,139,8,0,0,0,0,0,0,19

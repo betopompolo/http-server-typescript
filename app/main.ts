@@ -5,43 +5,43 @@ const fileDir = fileDirFlagIndex !== -1 ? Bun.argv[fileDirFlagIndex + 1] : "";
 
 const server = net.createServer((socket) => {
   socket.on('data', async (chunk) => {
-    const {status, headers, body} = deserialize(chunk.toString());
+    const {status, headers, body: reqBody} = deserialize(chunk.toString());
     const {url, method} = deserializeStatusRequest(status);
     const compressionSchemas = getSupportedCompressionSchemas(headers);
     const selectedCompressionSchema = compressionSchemas.length > 0 ? compressionSchemas[0] : null;
-    const defaultHeader: Headers = compressionSchemas.length > 0 ? {
-      'Content-Encoding': serializeCompressionSchemas(compressionSchemas),
+    const defaultHeader: Headers = selectedCompressionSchema ? {
+      'Content-Encoding': selectedCompressionSchema,
     } : {};
 
     // TODO: Implement a better handler for urls
     if (url === '/') {
       socket.write(createResponse(200, serializeHeaders(defaultHeader)));
     } else if (url.startsWith("/echo")) {
-      const body = compress(url.replace('/echo/', ''), selectedCompressionSchema)
+      const responseBody = compress(url.replace('/echo/', ''), selectedCompressionSchema)
       const header = serializeHeaders({
         ...defaultHeader,
         'Content-Type': 'text/plain',
-        'Content-Length': body.length.toString(),
+        'Content-Length': responseBody.length.toString(),
       });
       socket.write(
         createResponse(
           200,
           header,
-          body,
+          responseBody,
         )
       );
     } else if (url.startsWith('/user-agent')) {
       const userAgentValue = headers['User-Agent'];
-      const body = compress(userAgentValue, selectedCompressionSchema);
+      const responseBody = compress(userAgentValue, selectedCompressionSchema);
       socket.write(
         createResponse(
           200,
           serializeHeaders({
             ...defaultHeader,
             'Content-Type': 'text/plain',
-            'Content-Length': body.length.toString(),
+            'Content-Length': responseBody.length.toString(),
           }),
-          body
+          responseBody
         )
       )
     } else if (url.startsWith('/files')) {
@@ -49,21 +49,21 @@ const server = net.createServer((socket) => {
       const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
 
       if (method === 'POST') {
-        await Bun.file(fileURL).write(body);
+        await Bun.file(fileURL).write(reqBody);
         socket.write(createResponse(201));
       } else {
         try {
           const file = await Bun.file(fileURL).text();
-          const body = compress(file, selectedCompressionSchema);
+          const responseBody = compress(file, selectedCompressionSchema);
           socket.write(
             createResponse(
               200,
               serializeHeaders({
                 ...defaultHeader,
                 'Content-Type': 'application/octet-stream',
-                'Content-Length': body.length.toString()
+                'Content-Length': responseBody.length.toString()
               }),
-              body
+              responseBody
             )
           );
         } catch (e) {
@@ -96,14 +96,20 @@ const statusMessages: Record<RequestStatus, string> = {
   "404": "Not Found"
 }
 
-function createResponse(status: RequestStatus, header: string = '', body: unknown = ""): string {
+function createResponse(status: RequestStatus, header: string = '', body: string | Uint8Array = ""): string | Uint8Array {
   const statusMessage = statusMessages[status];
 
-  return [
-    `HTTP/1.1 ${status} ${statusMessage}`,
-    header,
-    body
-  ].join(crlf);
+  if (typeof body === 'string') {
+    return [
+      `HTTP/1.1 ${status} ${statusMessage}`,
+      header,
+      body
+    ].join(crlf);
+  } else {
+    const responseLine = `HTTP/1.1 ${status} ${statusMessage}${crlf}${header}${crlf}`;
+    const headerBuffer = Buffer.from(responseLine);
+    return Buffer.concat([headerBuffer, body]);
+  }
 }
 
 function serializeHeaders(headers: Headers): string {
@@ -116,15 +122,17 @@ function deserializeStatusRequest(status: string): { method: string, url: string
 }
 
 function deserialize(req: string): { status: string, headers: Headers, body: string} {
-  const splitted = req.split(crlf);
+  const [requestLineAndHeaders, body] = req.split(crlf + crlf);
+  const splitted = requestLineAndHeaders.split(crlf);
   const status = splitted[0];
-  const headers = splitted.slice(1, -1).reduce((acc, line) => {
+  const headers = splitted.slice(1).reduce((acc, line) => {
     const [key, value] = line.split(': ');
-    acc[key] = value;
+    if (key && value) {
+      acc[key] = value;
+    }
     return acc;
   }, {} as Headers);
-  const body = splitted[splitted.length - 1];
-  return { status, headers, body };
+  return { status, headers, body: body ?? "" };
 }
 
 const supportedCompressionSchemas = [
@@ -140,10 +148,6 @@ function getSupportedCompressionSchemas(header: Headers): CompressionSchema[] {
   const clientSchemas = (header['Accept-Encoding'] ?? "").split(compressionSchemaSeparator);
 
   return clientSchemas.filter(isCompressionSchema);
-}
-
-function serializeCompressionSchemas(compressionSchemas: CompressionSchema[]): string {
-  return compressionSchemas.join(compressionSchemaSeparator);
 }
 
 // TODO: Improve both body and return types
