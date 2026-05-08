@@ -8,6 +8,7 @@ const server = net.createServer((socket) => {
     const {status, headers, body} = deserialize(chunk.toString());
     const {url, method} = deserializeStatusRequest(status);
     const compressionSchemas = getSupportedCompressionSchemas(headers);
+    const selectedCompressionSchema = compressionSchemas.length > 0 ? compressionSchemas[0] : null;
     const defaultHeader: Headers = compressionSchemas.length > 0 ? {
       'Content-Encoding': serializeCompressionSchemas(compressionSchemas),
     } : {};
@@ -16,7 +17,7 @@ const server = net.createServer((socket) => {
     if (url === '/') {
       socket.write(createResponse(200, serializeHeaders(defaultHeader)));
     } else if (url.startsWith("/echo")) {
-      const body = url.replace('/echo/', '');
+      const body = compress(url.replace('/echo/', ''), selectedCompressionSchema)
       const header = serializeHeaders({
         ...defaultHeader,
         'Content-Type': 'text/plain',
@@ -26,20 +27,21 @@ const server = net.createServer((socket) => {
         createResponse(
           200,
           header,
-          body
+          body,
         )
       );
     } else if (url.startsWith('/user-agent')) {
       const userAgentValue = headers['User-Agent'];
+      const body = compress(userAgentValue, selectedCompressionSchema);
       socket.write(
         createResponse(
           200,
           serializeHeaders({
             ...defaultHeader,
             'Content-Type': 'text/plain',
-            'Content-Length': userAgentValue.length.toString(),
+            'Content-Length': body.length.toString(),
           }),
-          userAgentValue
+          body
         )
       )
     } else if (url.startsWith('/files')) {
@@ -52,15 +54,16 @@ const server = net.createServer((socket) => {
       } else {
         try {
           const file = await Bun.file(fileURL).text();
+          const body = compress(file, selectedCompressionSchema);
           socket.write(
             createResponse(
               200,
               serializeHeaders({
                 ...defaultHeader,
                 'Content-Type': 'application/octet-stream',
-                'Content-Length': file.length.toString(),
+                'Content-Length': body.length.toString()
               }),
-              file
+              body
             )
           );
         } catch (e) {
@@ -92,7 +95,8 @@ const statusMessages: Record<RequestStatus, string> = {
   "201": "Created",
   "404": "Not Found"
 }
-function createResponse(status: RequestStatus, header: string = '', body: string = ""): string {
+
+function createResponse(status: RequestStatus, header: string = '', body: unknown = ""): string {
   const statusMessage = statusMessages[status];
 
   return [
@@ -140,4 +144,17 @@ function getSupportedCompressionSchemas(header: Headers): CompressionSchema[] {
 
 function serializeCompressionSchemas(compressionSchemas: CompressionSchema[]): string {
   return compressionSchemas.join(compressionSchemaSeparator);
+}
+
+// TODO: Improve both body and return types
+type Compressor = (body: string) => ReturnType<typeof Bun.gzipSync>;
+const compressors: Record<CompressionSchema, Compressor> = {
+  gzip(body) {
+    return Bun.gzipSync(body);
+  }
+}
+
+// TODO: Improve data type
+function compress(data: string, compressorSchema: CompressionSchema | null)  {
+  return compressorSchema ? compressors[compressorSchema](data) : data;
 }
