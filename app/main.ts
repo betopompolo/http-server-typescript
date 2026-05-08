@@ -1,15 +1,9 @@
 import * as net from "net";
 
-// You can use print statements as follows for debugging, they'll be visible when running tests.
-console.log("Logs from your program will appear here!");
-
-// GET /echo/abc HTTP/1.1\r\nHost: localhost:4221\r\nUser-Agent: curl/7.64.1\r\nAccept: */*\r\n\r\n
-
 const server = net.createServer((socket) => {
   socket.on('data', (chunk) => {
-    const str = chunk.toString();
-    const [status] = str.split("\n");
-    const [_method, url] = status.split(" ");
+    const {status, headers} = deserialize(chunk.toString());
+    const {url} = deserializeStatusRequest(status);
 
     if (url === '/') {
       socket.write(createResponse(200));
@@ -19,8 +13,6 @@ const server = net.createServer((socket) => {
         'Content-Type': 'text/plain',
         'Content-Length': body.length.toString(),
       });
-      console.log(header);
-      console.log(body);
       socket.write(
         createResponse(
           200,
@@ -28,7 +20,20 @@ const server = net.createServer((socket) => {
           body
         )
       );
-    } else {
+    } else if(url.startsWith('/user-agent')) {
+      const userAgentValue = headers['User-Agent'];
+      socket.write(
+        createResponse(
+          200,
+          serializeHeaders({
+            'Content-Type': 'text/plain',
+            'Content-Length': userAgentValue.length.toString(),
+          }),
+          userAgentValue
+        )
+      )
+    }
+    else {
       socket.write(createResponse(404));
     }
   })
@@ -52,4 +57,21 @@ function createResponse(status: 404 | 200, header: string = '', body: string = "
 
 function serializeHeaders(headers: Record<string, string>): string {
   return Object.entries(headers).map(([key, value]) => `${key}: ${value}${crlf}`).join('');
+}
+
+function deserializeStatusRequest(status: string): { method: string, url: string } {
+  const [method, url] = status.split(" ");
+  return { method, url };
+}
+
+function deserialize(req: string): { status: string, headers: Record<string, string>, body: string} {
+  const splitted = req.split(crlf);
+  const status = splitted[0];
+  const headers = splitted.slice(1, -1).reduce((acc, line) => {
+    const [key, value] = line.split(': ');
+    acc[key] = value;
+    return acc;
+  }, {} as Record<string, string>);
+  const body = splitted[splitted.length - 1];
+  return { status, headers, body };
 }
