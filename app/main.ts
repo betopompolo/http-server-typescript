@@ -8,7 +8,7 @@ const server = net.createServer((socket) => {
     const {status, headers, body} = deserialize(chunk.toString());
     const {url, method} = deserializeStatusRequest(status);
     const compressionSchema = getSupportedCompressionSchema(headers);
-    const defaultHeader: Record<string, string> = compressionSchema ? {
+    const defaultHeader: Headers = compressionSchema ? {
       'Content-Encoding': compressionSchema,
     } : {};
 
@@ -85,6 +85,8 @@ const crlf = "\r\n" as const;
 
 type RequestStatus = 404 | 200 | 201;
 
+type Headers = Record<string, string>;
+
 const statusMessages: Record<RequestStatus, string> = {
   "200": "OK",
   "201": "Created",
@@ -100,7 +102,7 @@ function createResponse(status: RequestStatus, header: string = '', body: string
   ].join(crlf);
 }
 
-function serializeHeaders(headers: Record<string, string>): string {
+function serializeHeaders(headers: Headers): string {
   return Object.entries(headers).map(([key, value]) => `${key}: ${value}${crlf}`).join('');
 }
 
@@ -109,14 +111,14 @@ function deserializeStatusRequest(status: string): { method: string, url: string
   return { method, url };
 }
 
-function deserialize(req: string): { status: string, headers: Record<string, string>, body: string} {
+function deserialize(req: string): { status: string, headers: Headers, body: string} {
   const splitted = req.split(crlf);
   const status = splitted[0];
   const headers = splitted.slice(1, -1).reduce((acc, line) => {
     const [key, value] = line.split(': ');
     acc[key] = value;
     return acc;
-  }, {} as Record<string, string>);
+  }, {} as Headers);
   const body = splitted[splitted.length - 1];
   return { status, headers, body };
 }
@@ -129,7 +131,7 @@ function isCompressionSchema(value: unknown): value is CompressionSchema {
   return typeof value === 'string' && supportedCompressionSchemas.some(schema => schema === value);
 }
 
-function getSupportedCompressionSchema(header: Record<string, string>): CompressionSchema | null {
+function getSupportedCompressionSchema(header: Headers): CompressionSchema | null {
   const clientSchema = header['Accept-Encoding'];
 
   return isCompressionSchema(clientSchema) ? clientSchema : null;
