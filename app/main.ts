@@ -7,12 +7,18 @@ const server = net.createServer((socket) => {
   socket.on('data', async (chunk) => {
     const {status, headers, body} = deserialize(chunk.toString());
     const {url, method} = deserializeStatusRequest(status);
+    const compressionSchema = getSupportedCompressionSchema(headers);
+    const defaultHeader: Record<string, string> = compressionSchema ? {
+      'Content-Encoding': compressionSchema,
+    } : {};
 
+    // TODO: Implement a better handler for urls
     if (url === '/') {
-      socket.write(createResponse(200));
+      socket.write(createResponse(200, serializeHeaders(defaultHeader)));
     } else if (url.startsWith("/echo")) {
       const body = url.replace('/echo/', '');
       const header = serializeHeaders({
+        ...defaultHeader,
         'Content-Type': 'text/plain',
         'Content-Length': body.length.toString(),
       });
@@ -29,6 +35,7 @@ const server = net.createServer((socket) => {
         createResponse(
           200,
           serializeHeaders({
+            ...defaultHeader,
             'Content-Type': 'text/plain',
             'Content-Length': userAgentValue.length.toString(),
           }),
@@ -49,6 +56,7 @@ const server = net.createServer((socket) => {
             createResponse(
               200,
               serializeHeaders({
+                ...defaultHeader,
                 'Content-Type': 'application/octet-stream',
                 'Content-Length': file.length.toString(),
               }),
@@ -60,8 +68,7 @@ const server = net.createServer((socket) => {
         }
 
       }
-    }
-    else {
+    } else {
       socket.write(createResponse(404));
     }
   })
@@ -72,8 +79,9 @@ const server = net.createServer((socket) => {
 
 server.listen(4221, "localhost");
 
-const crlf = "\r\n" as const;
+// TODO: Organize
 
+const crlf = "\r\n" as const;
 
 type RequestStatus = 404 | 200 | 201;
 
@@ -111,4 +119,18 @@ function deserialize(req: string): { status: string, headers: Record<string, str
   }, {} as Record<string, string>);
   const body = splitted[splitted.length - 1];
   return { status, headers, body };
+}
+
+const supportedCompressionSchemas = [
+  'gzip',
+] as const;
+type CompressionSchema = typeof supportedCompressionSchemas[number];
+function isCompressionSchema(value: unknown): value is CompressionSchema {
+  return typeof value === 'string' && supportedCompressionSchemas.some(schema => schema === value);
+}
+
+function getSupportedCompressionSchema(header: Record<string, string>): CompressionSchema | null {
+  const clientSchema = header['Accept-Encoding'];
+
+  return isCompressionSchema(clientSchema) ? clientSchema : null;
 }
