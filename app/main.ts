@@ -7,9 +7,9 @@ const server = net.createServer((socket) => {
   socket.on('data', async (chunk) => {
     const {status, headers, body} = deserialize(chunk.toString());
     const {url, method} = deserializeStatusRequest(status);
-    const compressionSchema = getSupportedCompressionSchema(headers);
-    const defaultHeader: Headers = compressionSchema ? {
-      'Content-Encoding': compressionSchema,
+    const compressionSchemas = getSupportedCompressionSchemas(headers);
+    const defaultHeader: Headers = compressionSchemas.length > 0 ? {
+      'Content-Encoding': serializeCompressionSchemas(compressionSchemas),
     } : {};
 
     // TODO: Implement a better handler for urls
@@ -131,8 +131,13 @@ function isCompressionSchema(value: unknown): value is CompressionSchema {
   return typeof value === 'string' && supportedCompressionSchemas.some(schema => schema === value);
 }
 
-function getSupportedCompressionSchema(header: Headers): CompressionSchema | null {
-  const clientSchema = header['Accept-Encoding'];
+const compressionSchemaSeparator = ', ';
+function getSupportedCompressionSchemas(header: Headers): CompressionSchema[] {
+  const clientSchemas = header['Accept-Encoding'].split(compressionSchemaSeparator);
 
-  return isCompressionSchema(clientSchema) ? clientSchema : null;
+  return clientSchemas.filter(isCompressionSchema);
+}
+
+function serializeCompressionSchemas(compressionSchemas: CompressionSchema[]): string {
+  return compressionSchemas.join(compressionSchemaSeparator);
 }
