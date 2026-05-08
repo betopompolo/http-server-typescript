@@ -5,8 +5,8 @@ const fileDir = fileDirFlagIndex !== -1 ? Bun.argv[fileDirFlagIndex + 1] : "";
 
 const server = net.createServer((socket) => {
   socket.on('data', async (chunk) => {
-    const {status, headers} = deserialize(chunk.toString());
-    const {url} = deserializeStatusRequest(status);
+    const {status, headers, body} = deserialize(chunk.toString());
+    const {url, method} = deserializeStatusRequest(status);
 
     if (url === '/') {
       socket.write(createResponse(200));
@@ -36,22 +36,29 @@ const server = net.createServer((socket) => {
         )
       )
     } else if (url.startsWith('/files')) {
-      try {
-        const filename = url.replace('/files/', '');
-        const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
-        const file = await Bun.file(fileURL).text();
-        socket.write(
-          createResponse(
-            200,
-            serializeHeaders({
-              'Content-Type': 'application/octet-stream',
-              'Content-Length': file.length.toString(),
-            }),
-            file
-          )
-        );
-      } catch (e) {
-        socket.write(createResponse(404));
+      const filename = url.replace('/files/', '');
+      const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
+
+      if (method === 'POST') {
+        await Bun.file(fileURL).write(body);
+        socket.write(createResponse(201));
+      } else {
+        try {
+          const file = await Bun.file(fileURL).text();
+          socket.write(
+            createResponse(
+              200,
+              serializeHeaders({
+                'Content-Type': 'application/octet-stream',
+                'Content-Length': file.length.toString(),
+              }),
+              file
+            )
+          );
+        } catch (e) {
+          socket.write(createResponse(404));
+        }
+
       }
     }
     else {
@@ -67,8 +74,17 @@ server.listen(4221, "localhost");
 
 const crlf = "\r\n" as const;
 
-function createResponse(status: 404 | 200, header: string = '', body: string = ""): string {
-  const statusMessage = status === 404 ? "Not Found" : "OK";
+
+type RequestStatus = 404 | 200 | 201;
+
+const statusMessages: Record<RequestStatus, string> = {
+  "200": "OK",
+  "201": "Created",
+  "404": "Not Found"
+}
+function createResponse(status: RequestStatus, header: string = '', body: string = ""): string {
+  const statusMessage = statusMessages[status];
+
   return [
     `HTTP/1.1 ${status} ${statusMessage}`,
     header,
