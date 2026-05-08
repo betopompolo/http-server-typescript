@@ -104,10 +104,7 @@ function createResponse(status: RequestStatus, header: string = '', body: string
   ].join(crlf);
 
   if (typeof body === 'string') {
-    return [
-      statusAndHeader,
-      body
-    ].join(crlf);
+    return `${statusAndHeader}${body}`;
   } else {
     const headerBuffer = Buffer.from(statusAndHeader);
     return Buffer.concat([headerBuffer, body]);
