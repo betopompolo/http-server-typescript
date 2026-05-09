@@ -16,6 +16,10 @@ const server = net.createServer((socket) => {
     const connHeader = getConnectionHeader(headers);
     const shouldClose = connHeader === 'close';
 
+    if (shouldClose) {
+      defaultHeader[connectionHeaderKey] = 'close';
+    }
+
     // TODO: Implement a better handler for urls
     if (url === '/') {
       socket.write(createResponse(200, serializeHeaders(defaultHeader)));
@@ -83,7 +87,7 @@ const server = net.createServer((socket) => {
         socket.end(
           createResponse(200, serializeHeaders({
             ...headers,
-            [connectionHeader]: 'close',
+            [connectionHeaderKey]: 'close',
           }))
         );
         return;
@@ -168,9 +172,9 @@ function getSupportedCompressionSchemas(header: Headers): CompressionSchema[] {
   return clientSchemas.filter(isCompressionSchema);
 }
 
-const connectionHeader = 'Connection';
+const connectionHeaderKey = 'Connection';
 function getConnectionHeader(header: Headers) {
-  return connectionHeader in header ? header['Connection'] : null;
+  return connectionHeaderKey in header ? header['Connection'] : null;
 }
 
 // TODO: Improve both body and return types
