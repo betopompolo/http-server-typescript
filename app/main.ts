@@ -13,18 +13,6 @@ const server = net.createServer((socket) => {
       'Content-Encoding': selectedCompressionSchema,
     } : {};
 
-    const connHeader = getConnectionHeader(headers);
-
-    if (connHeader === 'close') {
-      socket.end(
-        createResponse(200, serializeHeaders({
-          ...headers,
-          [connectionHeader]: 'close',
-        }))
-      );
-      return;
-    }
-
     // TODO: Implement a better handler for urls
     if (url === '/') {
       socket.write(createResponse(200, serializeHeaders(defaultHeader)));
@@ -83,9 +71,23 @@ const server = net.createServer((socket) => {
         }
 
       }
+
+      const connHeader = getConnectionHeader(headers);
+
+      if (connHeader === 'close') {
+        socket.end(
+          createResponse(200, serializeHeaders({
+            ...headers,
+            [connectionHeader]: 'close',
+          }))
+        );
+        return;
+      }
     } else {
       socket.write(createResponse(404));
     }
+
+
   })
   socket.on("close", () => {
     socket.end();
