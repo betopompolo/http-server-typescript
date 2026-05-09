@@ -13,6 +13,9 @@ const server = net.createServer((socket) => {
       'Content-Encoding': selectedCompressionSchema,
     } : {};
 
+    const connHeader = getConnectionHeader(headers);
+    const shouldClose = connHeader === 'close';
+
     // TODO: Implement a better handler for urls
     if (url === '/') {
       socket.write(createResponse(200, serializeHeaders(defaultHeader)));
@@ -33,17 +36,21 @@ const server = net.createServer((socket) => {
     } else if (url.startsWith('/user-agent')) {
       const userAgentValue = headers['User-Agent'];
       const responseBody = compress(userAgentValue, selectedCompressionSchema);
-      socket.write(
-        createResponse(
-          200,
-          serializeHeaders({
-            ...defaultHeader,
-            'Content-Type': 'text/plain',
-            'Content-Length': responseBody.length.toString(),
-          }),
-          responseBody
-        )
-      )
+      const response = createResponse(
+        200,
+        serializeHeaders({
+          ...defaultHeader,
+          'Content-Type': 'text/plain',
+          'Content-Length': responseBody.length.toString(),
+        }),
+        responseBody
+      );
+
+      if (shouldClose) {
+        socket.end(response);
+      } else {
+        socket.write(response);
+      }
     } else if (url.startsWith('/files')) {
       const filename = url.replace('/files/', '');
       const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
@@ -71,8 +78,6 @@ const server = net.createServer((socket) => {
         }
 
       }
-
-      const connHeader = getConnectionHeader(headers);
 
       if (connHeader === 'close') {
         socket.end(
