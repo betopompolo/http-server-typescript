@@ -22,7 +22,7 @@ const server = net.createServer((socket) => {
 
     // TODO: Implement a better handler for urls
     if (url === '/') {
-      socket.write(createResponse(200, serializeHeaders(defaultHeader)));
+      writeResponse({socket, request: {headers}, response: createResponse(200, serializeHeaders(defaultHeader))});
     } else if (url.startsWith("/echo")) {
       const responseBody = compress(url.replace('/echo/', ''), selectedCompressionSchema)
       const header = serializeHeaders({
@@ -30,13 +30,11 @@ const server = net.createServer((socket) => {
         'Content-Type': 'text/plain',
         'Content-Length': responseBody.length.toString(),
       });
-      socket.write(
-        createResponse(
-          200,
-          header,
-          responseBody,
-        )
-      );
+      writeResponse({
+        socket,
+        request: {headers},
+        response: createResponse(200, header, responseBody)
+      });
     } else if (url.startsWith('/user-agent')) {
       const userAgentValue = headers['User-Agent'];
       const responseBody = compress(userAgentValue, selectedCompressionSchema);
@@ -50,24 +48,20 @@ const server = net.createServer((socket) => {
         responseBody
       );
 
-      if (shouldClose) {
-        socket.end(response);
-      } else {
-        socket.write(response);
-      }
+      writeResponse({ socket, request: { headers }, response });
     } else if (url.startsWith('/files')) {
       const filename = url.replace('/files/', '');
       const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
 
       if (method === 'POST') {
         await Bun.file(fileURL).write(reqBody);
-        socket.write(createResponse(201));
+        writeResponse({socket, request: {headers}, response: createResponse(201)});
       } else {
         try {
           const file = await Bun.file(fileURL).text();
           const responseBody = compress(file, selectedCompressionSchema);
-          socket.write(
-            createResponse(
+          writeResponse({
+            socket, request: {headers}, response: createResponse(
               200,
               serializeHeaders({
                 ...defaultHeader,
@@ -76,27 +70,18 @@ const server = net.createServer((socket) => {
               }),
               responseBody
             )
-          );
+          });
         } catch (e) {
-          socket.write(createResponse(404));
+          writeResponse({
+            socket,
+            request: {
+              headers,
+            },
+            response: createResponse(404)
+          })
         }
-
       }
-
-      if (connHeader === 'close') {
-        socket.end(
-          createResponse(200, serializeHeaders({
-            ...headers,
-            [connectionHeaderKey]: 'close',
-          }))
-        );
-        return;
-      }
-    } else {
-      socket.write(createResponse(404));
     }
-
-
   })
   socket.on("close", () => {
     socket.end();
@@ -113,13 +98,15 @@ type RequestStatus = 404 | 200 | 201;
 
 type Headers = Record<string, string>;
 
+type RequestResponse = string | Uint8Array;
+
 const statusMessages: Record<RequestStatus, string> = {
   "200": "OK",
   "201": "Created",
   "404": "Not Found"
 }
 
-function createResponse(status: RequestStatus, header: string = '', body: string | Uint8Array = ""): string | Uint8Array {
+function createResponse(status: RequestStatus, header: string = '', body: string | Uint8Array = ""): RequestResponse {
   const statusMessage = statusMessages[status];
   const statusAndHeader = [
     `HTTP/1.1 ${status} ${statusMessage}`,
@@ -131,6 +118,21 @@ function createResponse(status: RequestStatus, header: string = '', body: string
   } else {
     const headerBuffer = Buffer.from(statusAndHeader);
     return Buffer.concat([headerBuffer, body]);
+  }
+}
+
+type WriteResponseParams = {
+  socket: net.Socket;
+  request: {
+    headers: Headers;
+  }
+  response: RequestResponse;
+}
+function writeResponse({ socket, request, response }: WriteResponseParams) {
+  if (request.headers['Connection'] === 'close') {
+    socket.end(response);
+  } else {
+    socket.write(response);
   }
 }
 
