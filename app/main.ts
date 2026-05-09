@@ -13,6 +13,17 @@ const server = net.createServer((socket) => {
       'Content-Encoding': selectedCompressionSchema,
     } : {};
 
+    const connHeader = getConnectionHeader(headers);
+
+    if (connHeader === 'close') {
+      socket.end(
+        createResponse(200, serializeHeaders({
+          [connectionHeader]: 'close',
+        }))
+      );
+      return;
+    }
+
     // TODO: Implement a better handler for urls
     if (url === '/') {
       socket.write(createResponse(200, serializeHeaders(defaultHeader)));
@@ -147,6 +158,11 @@ function getSupportedCompressionSchemas(header: Headers): CompressionSchema[] {
   const clientSchemas = (header['Accept-Encoding'] ?? "").split(compressionSchemaSeparator);
 
   return clientSchemas.filter(isCompressionSchema);
+}
+
+const connectionHeader = 'Connection';
+function getConnectionHeader(header: Headers) {
+  return connectionHeader in header ? header['Connection'] : null;
 }
 
 // TODO: Improve both body and return types
