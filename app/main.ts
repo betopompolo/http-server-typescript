@@ -18,6 +18,7 @@ const server = net.createServer((socket) => {
     if (connHeader === 'close') {
       socket.end(
         createResponse(200, serializeHeaders({
+          ...headers,
           [connectionHeader]: 'close',
         }))
       );
