@@ -81,6 +81,14 @@ const server = net.createServer((socket) => {
           })
         }
       }
+    } else {
+      writeResponse({
+        socket,
+        request: {
+          headers,
+        },
+        response: createResponse(404)
+      });
     }
   })
   socket.on("close", () => {
