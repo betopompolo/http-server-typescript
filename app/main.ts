@@ -1,6 +1,7 @@
-import * as net from "net";
+import * as net from "node:net";
+import {HTTP} from "./http.ts";
 
-const fileDirFlagIndex = Bun.argv.findIndex(flag => flag === "--directory");
+const fileDirFlagIndex = Bun.argv.indexOf("--directory");
 const fileDir = fileDirFlagIndex !== -1 ? Bun.argv[fileDirFlagIndex + 1] : "";
 
 const server = net.createServer((socket) => {
@@ -9,32 +10,50 @@ const server = net.createServer((socket) => {
     const {url, method} = deserializeStatusRequest(status);
     const compressionSchemas = getSupportedCompressionSchemas(headers);
     const selectedCompressionSchema = compressionSchemas.length > 0 ? compressionSchemas[0] : null;
-    const defaultHeader: Headers = selectedCompressionSchema ? {
-      'Content-Encoding': selectedCompressionSchema,
-    } : {};
-
     const connHeader = getConnectionHeader(headers);
     const shouldClose = connHeader === 'close';
+
+    const defaultHeader: HTTP.Headers = selectedCompressionSchema ? {
+      'Content-Encoding': selectedCompressionSchema,
+    } : {};
 
     if (shouldClose) {
       defaultHeader[connectionHeaderKey] = 'close';
     }
 
     // TODO: Implement a better handler for urls
-    if (url === '/') {
-      writeResponse({socket, request: {headers}, response: createResponse(200, serializeHeaders(defaultHeader))});
-    } else if (url.startsWith("/echo")) {
-      const responseBody = compress(url.replace('/echo/', ''), selectedCompressionSchema)
-      const header = serializeHeaders({
-        ...defaultHeader,
-        'Content-Type': 'text/plain',
-        'Content-Length': responseBody.length.toString(),
+    for (const handler of handlers) {
+      if (!url.startsWith(handler.path) || method !== handler.method) {
+        continue;
+      }
+
+      const {data, headers, statusCode} = await handler.handle({
+        status,
+        headers: defaultHeader,
+        body: reqBody
       });
-      writeResponse({
+
+      const responseData = selectedCompressionSchema ? compressors[selectedCompressionSchema](data.toString()) : data;
+
+      const header = serializeHeaders({
+        'Content-Type': 'text/plain',
+        'Content-Length': data.length.toString(),
+        ...headers,
+      });
+
+      return writeResponse({
         socket,
         request: {headers},
-        response: createResponse(200, header, responseBody)
+        response: createResponse(
+          statusCode,
+          header,
+          responseData
+        )
       });
+    }
+
+    if (url === '/') {
+      writeResponse({socket, request: {headers}, response: createResponse(200, serializeHeaders(defaultHeader))});
     } else if (url.startsWith('/user-agent')) {
       const userAgentValue = headers['User-Agent'];
       const responseBody = compress(userAgentValue, selectedCompressionSchema);
@@ -48,7 +67,7 @@ const server = net.createServer((socket) => {
         responseBody
       );
 
-      writeResponse({ socket, request: { headers }, response });
+      writeResponse({socket, request: {headers}, response});
     } else if (url.startsWith('/files')) {
       const filename = url.replace('/files/', '');
       const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
@@ -71,7 +90,7 @@ const server = net.createServer((socket) => {
               responseBody
             )
           });
-        } catch (e) {
+        } catch {
           writeResponse({
             socket,
             request: {
@@ -99,27 +118,36 @@ const server = net.createServer((socket) => {
 server.listen(4221, "localhost");
 
 // TODO: Organize
+const handlers: HTTP.Handler[] = [
+  {
+    path: '/echo',
+    method: 'GET',
+    handle: async (req) => {
+      const url = deserializeStatusRequest(req.status).url;
+      console.log(`body: ${req.body}`);
+      return {
+        data: url.replace('/echo/', ''),
+        statusCode: 200,
+        headers: req.headers,
+      };
+    }
+  }
+];
+
 
 const crlf = "\r\n" as const;
 
-type RequestStatus = 404 | 200 | 201;
-
-type Headers = Record<string, string>;
-
 type RequestResponse = string | Uint8Array;
 
-const statusMessages: Record<RequestStatus, string> = {
+const statusMessages: Record<HTTP.StatusCode, string> = {
   "200": "OK",
   "201": "Created",
   "404": "Not Found"
 }
 
-function createResponse(status: RequestStatus, header: string = '', body: string | Uint8Array = ""): RequestResponse {
+function createResponse(status: HTTP.StatusCode, header: string = '', body: string | Uint8Array = ""): RequestResponse {
   const statusMessage = statusMessages[status];
-  const statusAndHeader = [
-    `HTTP/1.1 ${status} ${statusMessage}`,
-    `${header}${crlf}`,
-  ].join(crlf);
+  const statusAndHeader = `HTTP/1.1 ${status} ${statusMessage}${crlf}${header}${crlf}`;
 
   if (typeof body === 'string') {
     return `${statusAndHeader}${body}`;
@@ -132,28 +160,41 @@ function createResponse(status: RequestStatus, header: string = '', body: string
 type WriteResponseParams = {
   socket: net.Socket;
   request: {
-    headers: Headers;
+    headers: HTTP.Headers;
   }
   response: RequestResponse;
 }
-function writeResponse({ socket, request, response }: WriteResponseParams) {
-  if (request.headers['Connection'] === 'close') {
+
+function writeResponse({socket, request, response}: WriteResponseParams) {
+  if (request.headers.Connection === 'close') {
     socket.end(response);
   } else {
     socket.write(response);
   }
 }
 
-function serializeHeaders(headers: Headers): string {
+function serializeHeaders(headers: HTTP.Headers): string {
   return Object.entries(headers).map(([key, value]) => `${key}: ${value}${crlf}`).join('');
 }
 
-function deserializeStatusRequest(status: string): { method: string, url: string } {
+function deserializeStatusRequest(status: string): { method: HTTP.Method, url: string } {
   const [method, url] = status.split(" ");
-  return { method, url };
+  if (!HTTP.isHTTPMethod(method)) {
+    throw new Error(`Invalid HTTP method ${method}`);
+  }
+
+  return {method, url};
 }
 
-function deserialize(req: string): { status: string, headers: Headers, body: string} {
+
+// TODO: move
+type Request = {
+  status: string;
+  headers: HTTP.Headers;
+  body: string;
+}
+
+function deserialize(req: string): Request {
   const [requestLineAndHeaders, body] = req.split(crlf + crlf);
   const splitted = requestLineAndHeaders.split(crlf);
   const status = splitted[0];
@@ -163,28 +204,31 @@ function deserialize(req: string): { status: string, headers: Headers, body: str
       acc[key] = value;
     }
     return acc;
-  }, {} as Headers);
-  return { status, headers, body: body ?? "" };
+  }, {} as HTTP.Headers);
+  return {status, headers, body: body ?? ""};
 }
 
 const supportedCompressionSchemas = [
   'gzip',
 ] as const;
 type CompressionSchema = typeof supportedCompressionSchemas[number];
+
 function isCompressionSchema(value: unknown): value is CompressionSchema {
   return typeof value === 'string' && supportedCompressionSchemas.some(schema => schema === value);
 }
 
 const compressionSchemaSeparator = ', ';
-function getSupportedCompressionSchemas(header: Headers): CompressionSchema[] {
+
+function getSupportedCompressionSchemas(header: HTTP.Headers): CompressionSchema[] {
   const clientSchemas = (header['Accept-Encoding'] ?? "").split(compressionSchemaSeparator);
 
   return clientSchemas.filter(isCompressionSchema);
 }
 
 const connectionHeaderKey = 'Connection';
-function getConnectionHeader(header: Headers) {
-  return connectionHeaderKey in header ? header['Connection'] : null;
+
+function getConnectionHeader(header: HTTP.Headers) {
+  return connectionHeaderKey in header ? header.Connection : null;
 }
 
 // TODO: Improve both body and return types
@@ -196,6 +240,6 @@ const compressors: Record<CompressionSchema, Compressor> = {
 }
 
 // TODO: Improve data type
-function compress(data: string, compressorSchema: CompressionSchema | null)  {
+function compress(data: string, compressorSchema: CompressionSchema | null) {
   return compressorSchema ? compressors[compressorSchema](data) : data;
 }
