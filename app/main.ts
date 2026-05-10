@@ -10,99 +10,19 @@ const server = net.createServer((socket) => {
     const {url, method} = deserializeStatusRequest(status);
     const compressionSchemas = getSupportedCompressionSchemas(headers);
     const selectedCompressionSchema = compressionSchemas.length > 0 ? compressionSchemas[0] : null;
-    const connHeader = getConnectionHeader(headers);
-    const shouldClose = connHeader === 'close';
 
     const defaultHeader: HTTP.Headers = selectedCompressionSchema ? {
       'Content-Encoding': selectedCompressionSchema,
     } : {};
 
+    const connHeader = getConnectionHeader(headers);
+    const shouldClose = connHeader === 'close';
     if (shouldClose) {
       defaultHeader[connectionHeaderKey] = 'close';
     }
 
-    // TODO: Implement a better handler for urls
-    for (const handler of handlers) {
-      if (handler.path !== url || method !== handler.method) {
-        continue;
-      }
-
-      const handlerResponse = await handler.handle({
-        status,
-        headers: defaultHeader,
-        body: reqBody
-      });
-
-      const responseData = compress(
-        handlerResponse.data.toString(),
-        selectedCompressionSchema
-      );
-
-      // TODO: Remove nested 'headers'
-      writeResponse({
-        socket,
-        request: {headers},
-        response: createResponse(
-          handlerResponse.statusCode,
-          serializeHeaders({
-            'Content-Type': 'text/plain',
-            'Content-Length': responseData.length.toString(),
-            ...(headers ?? {}),
-          }),
-          responseData
-        )
-      });
-
-      return;
-    }
-
-    if (url.startsWith('/user-agent')) {
-      const userAgentValue = headers['User-Agent'];
-      const responseBody = compress(userAgentValue, selectedCompressionSchema);
-      const response = createResponse(
-        200,
-        serializeHeaders({
-          ...defaultHeader,
-          'Content-Type': 'text/plain',
-          'Content-Length': responseBody.length.toString(),
-        }),
-        responseBody
-      );
-
-      writeResponse({socket, request: {headers}, response});
-    } else if (url.startsWith('/files')) {
-      const filename = url.replace('/files/', '');
-      const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
-
-      if (method === 'POST') {
-        await Bun.file(fileURL).write(reqBody);
-        writeResponse({socket, request: {headers}, response: createResponse(201)});
-      } else {
-        try {
-          const file = await Bun.file(fileURL).text();
-          const responseBody = compress(file, selectedCompressionSchema);
-          writeResponse({
-            socket, request: {headers}, response: createResponse(
-              200,
-              serializeHeaders({
-                ...defaultHeader,
-                'Content-Type': 'application/octet-stream',
-                'Content-Length': responseBody.length.toString()
-              }),
-              responseBody
-            )
-          });
-        } catch {
-          writeResponse({
-            socket,
-            request: {
-              headers,
-            },
-            response: createResponse(404)
-          })
-        }
-      }
-    } else {
+    const handler = handlers.find(handler => handler.path === "/" ? url === handler.path : url.startsWith(handler.path) && handler.method === method);
+    if (!handler) {
       writeResponse({
         socket,
         request: {
@@ -110,27 +30,45 @@ const server = net.createServer((socket) => {
         },
         response: createResponse(404)
       });
+      return;
     }
+
+    const handlerResponse = await handler.handle({
+      status,
+      headers: {
+        ...headers,
+        ...defaultHeader,
+      },
+      body: reqBody
+    });
+
+    const responseData = compress(
+      handlerResponse.data.toString(),
+      selectedCompressionSchema
+    );
+
+    // TODO: Remove nested 'headers'
+    writeResponse({
+      socket,
+      request: {headers},
+      response: createResponse(
+        handlerResponse.statusCode,
+        serializeHeaders({
+          'Content-Type': 'text/plain',
+          'Content-Length': responseData.length.toString(),
+          ...(handlerResponse.headers ?? {}),
+          ...defaultHeader,
+        }),
+        responseData
+      )
+    });
   })
-  socket.on("close", () => {
-    socket.end();
-  });
 });
 
 server.listen(4221, "localhost");
 
 // TODO: Organize
 const handlers: HTTP.Handler[] = [
-  {
-    path: '/',
-    method: 'GET',
-    handle: async () => {
-      return {
-        data: '',
-        statusCode: 200,
-      }
-    }
-  },
   {
     path: '/echo',
     method: 'GET',
@@ -143,13 +81,71 @@ const handlers: HTTP.Handler[] = [
         headers: req.headers,
       };
     }
+  },
+  {
+    path: '/user-agent',
+    method: 'GET',
+    handle: async (req) => {
+      const userAgentValue = req.headers['User-Agent'];
+      return {
+        data: userAgentValue,
+        statusCode: 200,
+      }
+    }
+  },
+  {
+    path: '/files',
+    method: 'GET',
+    handle: async (req) => {
+      const {url} = deserializeStatusRequest(req.status);
+      const filename = url.replace('/files/', '');
+      const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
+      try {
+        const file = await Bun.file(fileURL).text();
+        return {
+          data: file,
+          statusCode: 200,
+          headers: {
+            'Content-Type': 'application/octet-stream',
+          }
+        }
+      } catch {
+        return {
+          data: '',
+          statusCode: 404,
+        }
+      }
+    }
+  },
+  {
+    path: '/files',
+    method: 'POST',
+    handle: async (req) => {
+      const {url} = deserializeStatusRequest(req.status);
+      const filename = url.replace('/files/', '');
+      const fileURL = Bun.pathToFileURL(`${fileDir}/${filename}`);
+      await Bun.file(fileURL).write(req.body);
+      return {
+        statusCode: 201,
+        data: ''
+      };
+    }
+  },
+  {
+    path: '/',
+    method: 'GET',
+    handle: async () => {
+      return {
+        data: '',
+        statusCode: 200,
+      }
+    }
   }
 ];
 
 
 const crlf = "\r\n" as const;
 
-type RequestResponse = string | Uint8Array;
 
 const statusMessages: Record<HTTP.StatusCode, string> = {
   "200": "OK",
@@ -157,7 +153,7 @@ const statusMessages: Record<HTTP.StatusCode, string> = {
   "404": "Not Found"
 }
 
-function createResponse(status: HTTP.StatusCode, header: string = '', body: string | Uint8Array = ""): RequestResponse {
+function createResponse(status: HTTP.StatusCode, header: string = '', body: string | Uint8Array = ""): HTTP.RequestResponse {
   const statusMessage = statusMessages[status];
   const statusAndHeader = `HTTP/1.1 ${status} ${statusMessage}${crlf}${header}${crlf}`;
 
@@ -174,7 +170,7 @@ type WriteResponseParams = {
   request: {
     headers: HTTP.Headers;
   }
-  response: RequestResponse;
+  response: HTTP.RequestResponse;
 }
 
 function writeResponse({socket, request, response}: WriteResponseParams) {
