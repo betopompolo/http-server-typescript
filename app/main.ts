@@ -33,15 +33,16 @@ const server = net.createServer((socket) => {
         body: reqBody
       });
 
-      const responseData = selectedCompressionSchema ? compressors[selectedCompressionSchema](data.toString()) : data;
+      const responseData = compress(data.toString(), selectedCompressionSchema);
 
       const header = serializeHeaders({
         'Content-Type': 'text/plain',
-        'Content-Length': data.length.toString(),
+        'Content-Length': responseData.length.toString(),
         ...headers,
       });
 
-      return writeResponse({
+      // TODO: Remove nested 'headers'
+      writeResponse({
         socket,
         request: {headers},
         response: createResponse(
@@ -50,6 +51,7 @@ const server = net.createServer((socket) => {
           responseData
         )
       });
+      return;
     }
 
     if (url === '/') {
@@ -124,7 +126,7 @@ const handlers: HTTP.Handler[] = [
     method: 'GET',
     handle: async (req) => {
       const url = deserializeStatusRequest(req.status).url;
-      console.log(`body: ${req.body}`);
+
       return {
         data: url.replace('/echo/', ''),
         statusCode: 200,
