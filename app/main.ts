@@ -23,7 +23,7 @@ const server = net.createServer((socket) => {
 
     // TODO: Implement a better handler for urls
     for (const handler of handlers) {
-      if (!url.startsWith(handler.path) || method !== handler.method) {
+      if (handler.path !== url || method !== handler.method) {
         continue;
       }
 
