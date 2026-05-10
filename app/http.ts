@@ -17,8 +17,8 @@ export namespace HTTP {
 
   export type HandlerResponse = {
     data: RequestResponse;
-    headers: HTTP.Headers;
     statusCode: StatusCode;
+    headers?: HTTP.Headers;
   }
 
   export type Handler = {

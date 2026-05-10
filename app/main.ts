@@ -27,36 +27,36 @@ const server = net.createServer((socket) => {
         continue;
       }
 
-      const {data, headers, statusCode} = await handler.handle({
+      const handlerResponse = await handler.handle({
         status,
         headers: defaultHeader,
         body: reqBody
       });
 
-      const responseData = compress(data.toString(), selectedCompressionSchema);
-
-      const header = serializeHeaders({
-        'Content-Type': 'text/plain',
-        'Content-Length': responseData.length.toString(),
-        ...headers,
-      });
+      const responseData = compress(
+        handlerResponse.data.toString(),
+        selectedCompressionSchema
+      );
 
       // TODO: Remove nested 'headers'
       writeResponse({
         socket,
         request: {headers},
         response: createResponse(
-          statusCode,
-          header,
+          handlerResponse.statusCode,
+          serializeHeaders({
+            'Content-Type': 'text/plain',
+            'Content-Length': responseData.length.toString(),
+            ...(headers ?? {}),
+          }),
           responseData
         )
       });
+
       return;
     }
 
-    if (url === '/') {
-      writeResponse({socket, request: {headers}, response: createResponse(200, serializeHeaders(defaultHeader))});
-    } else if (url.startsWith('/user-agent')) {
+    if (url.startsWith('/user-agent')) {
       const userAgentValue = headers['User-Agent'];
       const responseBody = compress(userAgentValue, selectedCompressionSchema);
       const response = createResponse(
@@ -121,6 +121,16 @@ server.listen(4221, "localhost");
 
 // TODO: Organize
 const handlers: HTTP.Handler[] = [
+  {
+    path: '/',
+    method: 'GET',
+    handle: async () => {
+      return {
+        data: '',
+        statusCode: 200,
+      }
+    }
+  },
   {
     path: '/echo',
     method: 'GET',
